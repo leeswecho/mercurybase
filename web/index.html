@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mercury Regolith Explorer</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<main id="stage">
+  <canvas id="globe" aria-label="3D globe of Mercury coloured by temperature; click to select a location"></canvas>
+  <div id="loading">Loading model…</div>
+  <div id="title" class="hud">
+    <h1>Mercury regolith temperature</h1>
+    <p>Drag to rotate, scroll to zoom, click a point to see its temperature profile.</p>
+    <div id="unitbar" role="group" aria-label="Temperature units"><span>Units</span></div>
+  </div>
+  <div id="depthbar" class="hud" role="group" aria-label="Depth shown on globe"><span>Globe depth</span></div>
+  <div id="legend" class="hud">
+    <div class="lbl" id="legend-lbl">Surface temperature (K)</div>
+    <canvas id="legend-bar" width="280" height="10"></canvas>
+    <div class="ticks" id="legend-ticks"></div>
+  </div>
+  <div id="timebar" class="hud">
+    <button id="play" aria-label="Play"></button>
+    <div class="slider">
+      <input id="time" type="range" min="0" max="1" step="0.0005" value="0" aria-label="Time within the Mercury solar day">
+    </div>
+    <div id="timeinfo"></div>
+    <select id="speed" aria-label="Playback speed">
+      <option value="60">1 day / 60 s</option>
+      <option value="20" selected>1 day / 20 s</option>
+      <option value="8">1 day / 8 s</option>
+    </select>
+  </div>
+  <div id="hovertip"></div>
+</main>
+<aside id="sidebar" aria-live="polite"></aside>
+<script type="module" src="app.js"></script>
+</body>
+</html>

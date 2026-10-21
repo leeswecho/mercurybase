@@ -1,0 +1,8 @@
+numpy
+numba
+scipy
+xarray
+netCDF4
+matplotlib
+pillow
+tifffile
