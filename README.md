@@ -21,13 +21,13 @@ environmental input for a Mercury base design simulator.
 | `web_server.py`, `web/` | Interactive 3D explorer (local web server) |
 
 The data are not in the repository: about 625 MB of public MESSENGER elevation
-models are downloaded, and about 630 MB of products are built from them.
+models are downloaded, and about 1.3 GB of products are built from them.
 `setup_data.py` does both.
 
 ```
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
 .venv/Scripts/python setup_data.py        # all of the steps below: downloads ~625 MB of DEMs,
-                                          # then builds the data (~3 h on 8 cores, resumable)
+                                          # then builds the data (~5 h on 8 cores, resumable)
 .venv/Scripts/python web_server.py        # http://127.0.0.1:8000/
 ```
 
@@ -35,7 +35,7 @@ Or step by step:
 
 ```
 .venv/Scripts/python generate_grid.py      # ~65 s on 8 cores
-.venv/Scripts/python polar_terrain.py --pole north   # ~33 min each, resumable
+.venv/Scripts/python polar_terrain.py --pole north   # ~1.2 h (north), ~2.2 h (south) on 8 cores; resumable
 .venv/Scripts/python polar_terrain.py --pole south
 .venv/Scripts/python global_terrain.py slopes      # ~16 s; needs the global DEM (see below)
 .venv/Scripts/python global_terrain.py table       # ~80 min on 8 cores, resumable
@@ -238,8 +238,8 @@ topography dominates: craters hold permanently shadowed regions (PSRs) at
 - The same 1D regolith column runs under every cell.
 - Margin cells outside the product use the flat model.
 
-**Products** (`data/mercury_polar_<pole>_2km.nc`: north about 644 × 644 cells,
-south about 862 × 862, stored as int16 with scale factors; the edge latitude is
+**Products** (`data/mercury_polar_<pole>_2km.nc`: north 642 × 642 cells,
+south 860 × 860, stored as int16 with scale factors; the edge latitude is
 the file's `lat_min` attribute):
 - `temperature(y, x, local_time, depth)`: 48 local times and 13 depths
   from 0 to 3 m.
@@ -258,14 +258,15 @@ there. It runs a 25 km neighbourhood at native DEM resolution, nested in a
 2 km grid out to 250 km. Infrared from distant terrain comes from the
 product.
 
-Statistics from the previous 80° products (to be refreshed for the 75° N / 70° S builds):
+Statistics (north file 322 MB, 324,028 cells ≥ 75° N; south file 597 MB,
+581,256 cells ≥ 70° S):
 
-| | North | South |
-|---|---|---|
-| PSR area ≥ 80° (2 km cells) | 13,500 km² (2.4%) | 2,100 km² (0.4%) |
-| PSR maximum surface T, median | 109 K | 82 K |
-| PSR mean T at 0.5 m, median / minimum | 74 / 31 K | 60 / 32 K |
-| Hottest surface (Sun-facing slopes) | 569 K | 508 K |
+| | North ≥ 75° | South ≥ 70° | North ≥ 80° | South ≥ 80° |
+|---|---|---|---|---|
+| PSR area (2 km cells) | 15,600 km² (1.2%) | 2,900 km² (0.13%) | 13,500 km² (2.4%) | 2,100 km² (0.4%) |
+| PSR maximum surface T, median | 119 K | 99 K | 109 K | 82 K |
+| PSR mean T at 0.5 m, median / minimum | 81 / 31 K | 69 / 32 K | 74 / 31 K | 60 / 32 K |
+| Hottest surface (Sun-facing slopes) | 599 K | 620 K | 569 K | 508 K |
 
 **Checks**:
 - Infrared iteration: the production two-pass result differs from three
@@ -303,7 +304,8 @@ the surface and ±25 K at 0.5 m. Use `on_demand()` for a specific base site.
 | Polar site, terrain-aware, first in a process | ~2.1–2.5 s (load compiled code, DEM, product) |
 | Polar site, new neighbourhood (builds 2 km far grid) | ~0.9–1.2 s |
 | Polar site, within cached neighbourhood (~50 km) | 43–64 ms |
-| Polar product, one pole (143k cells) | ~31–33 min |
+| Polar product, north (324k cells) | 2.3 h on 2 cores (AMD EPYC 9R14); est. ~1.2 h on 8 |
+| Polar product, south (581k cells) | 4.3 h on 2 cores; est. ~2.2 h on 8 |
 | Slope-aware lookup outside the caps | ~0.7 µs per point, vectorised |
 | Terrain-aware site outside the caps, new neighbourhood (`GlobalSite`) | ~0.86–0.92 s (first in a process ~1.2 s with cached compiled code) |
 | Terrain-aware site outside the caps, within cached neighbourhood | 63–80 ms |
