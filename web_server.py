@@ -18,7 +18,7 @@ day after the reference perihelion (mean subsolar longitude -360 tau). The
 whole day is rendered: the flat model satisfies T(lon + 180, tau) =
 T(lon, tau + 1/2), but terrain in the polar caps does not.
 
-Below 80 deg the globe shades every ~2 km pixel by its own slope: the frame
+Outside the polar caps the globe shades every ~2 km pixel by its own slope: the frame
 holds the slope table's *response* at that moment, i.e. T at each
 (latitude node, longitude node, gy node, gx node), and the GPU interpolates it
 with the pixel's slope from /api/slopes.png.
@@ -26,8 +26,9 @@ with the pixel's slope from /api/slopes.png.
 Atlas layout (width 9 * 180, height 9 * 42 + CAP):
   top: 9 x 9 tiles; tile (row = gy node, column = gx node) is 180 x 42 texels,
        texel (column = lon node 0..358 step 2, row = lat node 0..82 step 2)
-  below (row offset 9 * 42): north polar cap at column 0, south cap at column
-       CAP, each the 2 km polar product grid (row 0 = largest map y).
+  below (row offset 9 * 42): north polar cap at column 0, south cap at the
+       column after it (meta caps[pole].col), each its 2 km polar product grid
+       (row 0 = largest map y); the caps can differ in size.
 Pixel value v: 0 = no data, else T = T_LO + (v-1) * T_STEP.
 Slope texture: R, G = 128 + 127 * g / G_MAX for gx (east), gy (north).
 """
@@ -78,11 +79,17 @@ class Backend:
         self.lon_t, self.lat_t = ds["lon"].values, ds["lat"].values
         self.lt_t, self.z_t = ds["local_time"].values, ds["depth"].values
         self.caps = {}
+        col = 0
         for pole in ("north", "south"):
             p = os.path.join(DATA, f"mercury_polar_{pole}_2km.nc")
             if os.path.exists(p):
-                self.caps[pole] = self._load_cap(p)
-        self.cap_n = max([c["T"].shape[0] for c in self.caps.values()], default=644)
+                tab = self.mt.polar.get(pole)  # share its packed temperatures (largest array)
+                c = self._load_cap(p, T=tab.T if tab is not None else None)
+                c["col"] = col
+                col += c["x"].size
+                self.caps[pole] = c
+        self.cap_cols = col
+        self.cap_rows = max([c["y"].size for c in self.caps.values()], default=0)
         self.model = Model()
         st = self.mt.slope_table
         self.g_nodes = st.g.tolist() if st is not None else [0.0]
@@ -101,16 +108,17 @@ class Backend:
         self.exact_cache = OrderedDict()
         print(f"backend loaded in {time.perf_counter() - t0:.1f} s "
               f"(polar products: {', '.join(self.caps) or 'none'}; "
-              f"slope table: {'yes' if st is not None else 'no, flat terrain below 80 deg'})")
+              f"slope table: {'yes' if st is not None else 'no, flat terrain outside the caps'})")
 
     @staticmethod
-    def _load_cap(path):
+    def _load_cap(path, T=None):
         ds = xr.open_dataset(path, mask_and_scale=False)
-        c = dict(T=ds["temperature"].values,                          # int16 (y, x, lt, depth)
+        c = dict(T=ds["temperature"].values if T is None else T,      # int16 (y, x, lt, depth)
                  scale=float(ds["temperature"].attrs["scale_factor"]),
                  lat=ds["lat"].values.astype(np.float64), lon=ds["lon"].values.astype(np.float64),
                  x=ds["x"].values, y=ds["y"].values, depth=ds["depth"].values,
-                 nlt=ds.sizes["local_time"], pole=ds.attrs["pole"])
+                 nlt=ds.sizes["local_time"], pole=ds.attrs["pole"],
+                 lat_min=float(ds.attrs.get("lat_min", 80.0)))
         for k in ("elevation", "slope", "sky_view_factor", "sun_visible_fraction",
                   "direct_lit_fraction", "mean_direct_flux", "permanent_shadow", "dem_quality"):
             v = ds[k]
@@ -132,12 +140,13 @@ class Backend:
         tau = m.t / m.planet.P_sol
         step = max(1, tau.size // 960)
         caps = {p: dict(x0=float(c["x"][0]), y0=float(c["y"][0]),
-                        dx=float(c["x"][1] - c["x"][0]), n=int(c["x"].size))
+                        dx=float(c["x"][1] - c["x"][0]), n=int(c["x"].size),
+                        col=int(c["col"]), lat_min=c["lat_min"])
                 for p, c in self.caps.items()}
         return dict(
             version=self.version, n_frames=N_FRAMES, t_lo=T_LO, t_step=T_STEP, globe_depths=GLOBE_DEPTHS,
             solar_day_earth_days=float(m.planet.P_sol / 86400.0), radius_km=R_KM,
-            caps=caps, cap_n=self.cap_n, g_nodes=self.g_nodes, g_max=G_MAX,
+            caps=caps, g_nodes=self.g_nodes, g_max=G_MAX,
             tile_w=TILE_W, tile_h=TILE_H, cap_y0=TILE_H * len(self.g_nodes),
             slopes=self.mt.slope_map is not None,
             orbit=dict(tau=np.round(tau[::step], 5).tolist(),
@@ -184,19 +193,17 @@ class Backend:
         return out * scale                                               # (lat, lon, gy, gx)
 
     def _render_frame(self, depth, k):
-        n = self.cap_n
         tau = k / N_FRAMES
         G = len(self.g_nodes)
         R = self._response(depth, tau)
         tiles = R.transpose(2, 0, 3, 1).reshape(G * TILE_H, G * TILE_W)  # rows: gy, lat; cols: gx, lon
         y0 = G * TILE_H
-        atlas = np.zeros((y0 + n, max(G * TILE_W, 2 * n)), dtype=np.uint8)
+        atlas = np.zeros((y0 + self.cap_rows, max(G * TILE_W, self.cap_cols)), dtype=np.uint8)
         atlas[:y0, :G * TILE_W] = _encode(tiles)
-        for off, pole in ((0, "north"), (n, "south")):
-            if pole in self.caps:
-                c = self.caps[pole]
-                atlas[y0:y0 + c["T"].shape[0], off:off + c["T"].shape[1]] = \
-                    _encode(self._cap_slice(c, depth, tau))
+        for c in self.caps.values():
+            off = c["col"]
+            atlas[y0:y0 + c["T"].shape[0], off:off + c["T"].shape[1]] = \
+                _encode(self._cap_slice(c, depth, tau))
         buf = io.BytesIO()
         Image.fromarray(atlas, mode="L").save(buf, format="PNG", compress_level=6)
         return buf.getvalue()
@@ -284,7 +291,7 @@ class Backend:
     def _cap_cell(self, lat, lon):
         pole = "north" if lat > 0 else "south"
         c = self.caps.get(pole)
-        if c is None or abs(lat) < 80.0:
+        if c is None or abs(lat) < c["lat_min"]:
             return None, None
         la, lo = np.deg2rad(abs(lat)), np.deg2rad(lon % 360)
         rho = 2 * R_KM * np.tan((np.pi / 2 - la) / 2)
@@ -324,8 +331,9 @@ class Backend:
                 dem_quality=int(c["dem_quality"][i, j]))
             h = c["horizon"][i, j].astype(np.float64) * c["horizon_scale"]
             horizon = self._horizon_compass(h, lon, c["pole"])
-        info["sources"] = site_script.sources(lat, "table", terrain=si is not None or c is not None)
-        info["script"] = abs(lat) >= 80.0 or self.mt.slope_table is not None
+        info["sources"] = site_script.sources(lat, "table", terrain=si is not None or c is not None,
+                                              polar=c is not None)
+        info["script"] = self.mt.is_polar(lat) or self.mt.slope_table is not None
         return self._payload(lat, lon, lt, depth, T, info, horizon)
 
     def exact_run(self, lat, lon):
@@ -373,7 +381,8 @@ class Backend:
                 depth, T = depth[keep], T[:, keep]
                 info = dict(source="exact flat 1D run", terrain=False)
                 horizon = None
-        info["sources"] = site_script.sources(lat, "exact", terrain=r is not None)
+        info["sources"] = site_script.sources(lat, "exact", terrain=r is not None,
+                                              polar=r is not None and "horizon_azimuth_deg" not in r)
         info["script"] = r is not None
         info["seconds"] = time.perf_counter() - t0
         return self._payload(lat, lon, np.asarray(lt), np.asarray(depth), np.asarray(T), info, horizon)

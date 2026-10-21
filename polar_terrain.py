@@ -39,19 +39,26 @@ SUN_RADIUS_RAD_1AU = 0.0046524  # angular radius of the Sun at 1 AU
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEM_DIR = os.path.join(HERE, "data", "dem")
 
-# Array-index mapping verified against named craters (Prokofiev, Kandinsky,
-# Tolkien, Chesterton, Gordimer; Hesiod, Bernini). With map coordinates
-# x = rho sin(lon), y = -rho cos(lon) (north) / +rho cos(lon) (south):
+# Array-index mapping, with map coordinates x = rho sin(lon),
+# y = -rho cos(lon) (north) / +rho cos(lon) (south), east longitude:
 #   row = center - y / scale ; col = center + col_sign * x / scale
+# Verified against the USGS global DEM (correlation 0.95-0.98 north, 0.999
+# south) and against IAU crater centres, which the Gazetteer gives in WEST
+# longitude for Mercury: Prokofiev 86.0 N 63.7 E, Kandinsky 87.9 N 78.8 E.
+# (An earlier col_sign = -1 for the north mirrored it east-west.)
+#
+# cap_lat: equatorward edge of each polar product. The north MLA DEM stops
+# at 75 N, so terrain equatorward of it (needed for horizons near the cap
+# edge) is filled from the global DEM (fill_global), blended over 0.5 deg.
 DEMS = {
     "north": dict(
         file="hdem_75n_250m.img", n=5120, scale_km=0.25, center=2559.5,
-        ref_radius_m=2440000.0, col_sign=-1, lat_limit=75.0,
+        ref_radius_m=2440000.0, col_sign=+1, lat_limit=75.0, cap_lat=75.0, fill_global=True,
         url="https://pds-geosciences.wustl.edu/MESSENGER/mess-e_v_h-mla-3_4-cdr_rdr-data-v2/"
             "messmla_2101/gdr/img/hdem_75n_250m.img"),
     "south": dict(
         file="MSGR_DEM_USG_SP_I_V02.IMG", n=4625, scale_km=0.66524315270546, center=2312.0,
-        ref_radius_m=2439400.0, col_sign=+1, lat_limit=55.0, gap_colat_deg=2.5,
+        ref_radius_m=2439400.0, col_sign=+1, lat_limit=55.0, cap_lat=70.0, gap_colat_deg=2.5,
         url="https://pds-imaging.jpl.nasa.gov/data/messenger/MESSDEM_1001/DEM/POLAR/IMG/"
             "MSGR_DEM_USG_SP_I_V02.IMG"),
 }
@@ -77,6 +84,17 @@ def load_dem(pole):
         idx = ndimage.distance_transform_edt(bad, return_distances=False, return_indices=True)
         radius = radius[tuple(idx)]
     return radius
+
+
+_GLOBAL_SLOPES = []
+
+
+def global_slope_map():
+    """The global 2 km elevation/slope map (loaded once)."""
+    if not _GLOBAL_SLOPES:
+        from global_terrain import SlopeMap  # global_terrain imports this module
+        _GLOBAL_SLOPES.append(SlopeMap())
+    return _GLOBAL_SLOPES[0]
 
 
 def stereo_inverse(x, y, pole):
@@ -118,6 +136,8 @@ class TerrainGrid:
         rows = d["center"] - Y / d["scale_km"]
         cols = d["center"] + d["col_sign"] * X / d["scale_km"]
         self.radius = ndimage.map_coordinates(dem, [rows, cols], order=1, mode="nearest")
+        if d.get("fill_global"):
+            self._fill_global(d["lat_limit"])
         co, so = np.cos(self.lon), np.sin(self.lon)
         if pole == "north":  # map-frame (x right, y up) unit vectors of local east / north
             EM, NM = np.stack([co, so], -1), np.stack([-so, co], -1)
@@ -127,6 +147,17 @@ class TerrainGrid:
         self.dem_quality = np.ones(self.shape, dtype=np.int8)
         if "gap_colat_deg" in d:
             self.dem_quality[90 - np.rad2deg(np.abs(self.lat)) < d["gap_colat_deg"]] = 0
+
+    def _fill_global(self, lat_limit, blend_deg=0.5):
+        """Terrain equatorward of the polar DEM from the global DEM (2 km), blended at the edge."""
+        latd = np.rad2deg(np.abs(self.lat))
+        w = np.clip((latd - lat_limit) / blend_deg, 0.0, 1.0)  # 1 = polar DEM only
+        m = w < 1.0
+        if not m.any():
+            return
+        rg = R_KM + global_slope_map().elevation_bilinear(latd[m] * np.sign(self.lat[m]),
+                                                          np.rad2deg(self.lon[m])) / 1000.0
+        self.radius[m] = w[m] * self.radius[m] + (1.0 - w[m]) * rg
 
     def _derive(self, EM, NM):
         """Frames, 3D positions and surface normals from lat, lon (rad) and radius (km)."""
@@ -586,9 +617,14 @@ def pack(a, scale):
     return out
 
 
-def build_polar_product(pole, res_km=2.0, lat_min=80.0, margin_deg=5.0, out=None, log=print):
+def build_polar_product(pole, res_km=2.0, lat_min=None, margin_deg=5.0, out=None, log=print):
     t_start = time.perf_counter()
-    lat_edge = max(lat_min - margin_deg, DEMS[pole]["lat_limit"])
+    d = DEMS[pole]
+    lat_min = d["cap_lat"] if lat_min is None else lat_min
+    # sources beyond the receivers, out to ~ray reach (250 km ~ 5.9 deg)
+    lat_edge = lat_min - margin_deg
+    if not d.get("fill_global"):
+        lat_edge = max(lat_edge, d["lat_limit"])
     half = 2 * R_KM * np.tan(np.deg2rad(90 - lat_edge) / 2)
     tg = TerrainGrid(pole, res_km, half)
     log(f"{pole}: grid {tg.shape[0]}x{tg.shape[1]} at {res_km} km "
@@ -664,7 +700,9 @@ def build_polar_product(pole, res_km=2.0, lat_min=80.0, margin_deg=5.0, out=None
             "pole": pole, "resolution_km": res_km, "lat_min": lat_min,
             "projection": "polar stereographic, sphere R=2439.4 km, true scale at pole; "
                           "north: x=rho sin(lon), y=-rho cos(lon); south: y=+rho cos(lon)",
-            "dem": DEMS[pole]["file"], "n_azimuth": pm.naz, "max_ray_km": pm.max_dist,
+            "dem": DEMS[pole]["file"] + (" (+ USGS global DEM equatorward of "
+                                         f"{d['lat_limit']:g} deg)" if d.get("fill_global") else ""),
+            "n_azimuth": pm.naz, "max_ray_km": pm.max_dist,
             "method": "1D heat conduction per cell; direct sunlight with ray-traced horizons, "
                       "finite solar disk, slopes; single-scattered sunlight and thermal IR "
                       "from visible terrain via Lambertian view factors; 2 passes",
@@ -682,7 +720,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pole", choices=["north", "south"], required=True)
     ap.add_argument("--res", type=float, default=2.0, help="grid resolution, km")
-    ap.add_argument("--lat-min", type=float, default=80.0)
+    ap.add_argument("--lat-min", type=float, default=None,
+                    help="equatorward edge of the product (default: per pole, 75 N / 70 S)")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
     build_polar_product(a.pole, a.res, a.lat_min, out=a.out)

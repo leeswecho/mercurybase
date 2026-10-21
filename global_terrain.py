@@ -1,7 +1,7 @@
 """
 Slope-aware temperatures for the whole planet outside the polar products.
 
-Below 80 deg latitude the Sun climbs high, so distant terrain rarely shadows a
+Outside the polar caps the Sun climbs high, so distant terrain rarely shadows a
 site; the main terrain effect is each surface patch's own tilt. This module
 models that with a precomputed *slope table*: 1D thermal runs for a tilted
 surface over a grid of (latitude, longitude, east slope, north slope),
@@ -380,7 +380,7 @@ class SlopeTable:
 
 
 # ----------------------------------------------------------------------------
-# Full terrain-aware single site anywhere (for "exact" runs below 80 deg)
+# Full terrain-aware single site anywhere (for "exact" runs outside the polar caps)
 # ----------------------------------------------------------------------------
 
 def oblique_inverse(x, y, lat0, lon0):

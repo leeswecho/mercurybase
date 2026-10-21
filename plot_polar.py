@@ -27,6 +27,7 @@ def hillshade(z, res_m):
 def plot(pole):
     ds = xr.open_dataset(os.path.join("data", f"mercury_polar_{pole}_2km.nc"))
     x, y = ds["x"].values, ds["y"].values
+    lat_min = float(ds.attrs.get("lat_min", 80.0))
     ext = [x[0], x[-1], y[-1], y[0]]
     T = ds["temperature"]
     inside = np.isfinite(ds["sky_view_factor"].values)
@@ -53,13 +54,13 @@ def plot(pole):
         if title != "Shaded relief":
             fig.colorbar(im, ax=ax, shrink=0.8)
         # latitude rings and 0-degree meridian for orientation
-        for latr in (82, 84, 86, 88):
+        for latr in range(int(lat_min) + 2, 90, 2):
             r = 2 * 2439.4 * np.tan(np.deg2rad(90 - latr) / 2)
             ax.add_patch(plt.Circle((0, 0), r, fill=False, ec="#eb6834", lw=0.5, alpha=0.6))
-        r80 = 2 * 2439.4 * np.tan(np.deg2rad(10) / 2)
+        r_edge = 2 * 2439.4 * np.tan(np.deg2rad(90 - lat_min) / 2)
         sgn = -1 if pole == "north" else 1
-        ax.plot([0, 0], [0, sgn * r80], color="#eb6834", lw=0.6, alpha=0.6)
-        ax.text(0, sgn * r80 * 1.03, "0°E", color="#eb6834", ha="center",
+        ax.plot([0, 0], [0, sgn * r_edge], color="#eb6834", lw=0.6, alpha=0.6)
+        ax.text(0, sgn * r_edge * 1.03, "0°E", color="#eb6834", ha="center",
                 va="top" if pole == "north" else "bottom", fontsize=8)
     if "dem_quality" in ds and (ds["dem_quality"].values == 0).any():
         for ax in axs.flat:
@@ -67,7 +68,7 @@ def plot(pole):
             ax.add_patch(plt.Circle((0, 0), r, fill=False, ec="#e34948", lw=1, ls="--"))
         fig.text(0.01, 0.005, "Dashed red circle: no stereo topography (interpolated DEM); "
                  "terrain results inside are unreliable.", color=INK, fontsize=9)
-    fig.suptitle(f"Mercury {pole} polar region (≥80°), 2 km terrain-aware model; rings every 2°",
+    fig.suptitle(f"Mercury {pole} polar region (≥{lat_min:g}°), 2 km terrain-aware model; rings every 2°",
                  x=0.01, ha="left", color=INK)
     fig.tight_layout()
     out = os.path.join(OUT, f"polar_{pole}.png")

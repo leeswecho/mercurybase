@@ -13,7 +13,7 @@ environmental input for a Mercury base design simulator.
 | `mercury_lookup.py` | `MercuryTemperature` — interpolated lookup at any point, plus exact on-demand runs |
 | `polar_terrain.py` | Terrain-aware polar model; writes `data/mercury_polar_<pole>_2km.nc` |
 | `polar_site.py` | `PolarSite` — terrain-aware on-demand run for one polar site at native DEM resolution |
-| `global_terrain.py` | Below 80°: global slope map, slope-aware table, and `GlobalSite` (full terrain-aware on-demand run anywhere) |
+| `global_terrain.py` | Outside the polar caps: global slope map, slope-aware table, and `GlobalSite` (full terrain-aware on-demand run anywhere) |
 | `site_script.py`, `site_script_template.py` | Per-site data sources, and the downloadable standalone script that reproduces an exact run |
 | `setup_data.py` | Downloads the DEMs and builds all data products (skips what exists) |
 | `benchmark.py` | Timing and accuracy of on-demand single-site runs (flat, polar and global terrain) |
@@ -58,7 +58,7 @@ lt, z, T = mt.on_demand(lat=-35.0, lon=250.0)         # exact run for one site
 
 The page shows a 3D globe coloured by temperature at a chosen depth
 (surface to 3 m). The polar caps are drawn at the 2 km resolution of the
-terrain products. Below 80°, each ~2 km pixel is coloured using its own
+terrain products. Outside them, each ~2 km pixel is coloured using its own
 slope. The GPU combines a static slope texture (31 MB PNG, downloaded once
 and then cached) with a small per-frame table of slope responses.
 
@@ -73,10 +73,10 @@ and then cached) with a small per-frame table of slope responses.
   - depth profile, now and over the day
   - Sun path, against the terrain horizon at polar sites
   - current values, plus illumination facts at polar sites, or elevation and
-    local slope below 80°
+    local slope outside the polar caps
 - **Linked time:** click or drag any time chart to set the global time.
 - **Exact run:** "Run exact model here" calls the full terrain-aware
-  on-demand model everywhere: `PolarSite` poleward of 80°, `GlobalSite`
+  on-demand model everywhere: `PolarSite` inside the polar caps, `GlobalSite`
   (665 m DEM) below. It adds real horizons, shadowing and heat from
   surrounding terrain, which the slope-only table leaves out.
 - **Data sources:** each site lists the datasets and papers behind its values, with
@@ -147,7 +147,7 @@ pole) / 573 K (warm pole), night minimum ~95–110 K.
 
 ## Limitations
 
-- **Slope only below 80°** (table and globe): each 2 km cell's own slope is
+- **Slope only outside the polar caps** (table and globe): each 2 km cell's own slope is
   included, but not horizon shadowing, scattered light or IR from
   neighbouring terrain. Slopes steeper than the table's 0.4 gradient (21.8°)
   are clamped; that is about 0.1% of the surface. Slopes are 2 km averages,
@@ -158,7 +158,7 @@ pole) / 573 K (warm pole), night minimum ~95–110 K.
 - Laterally uniform regolith properties; no ice, rock, or buried structures.
 - Solar constant fixed (no solar-cycle variation, ~0.1%).
 
-## Below 80°: slope-aware model
+## Outside the polar caps: slope-aware model
 
 Data: USGS MESSENGER global DEM v2, 665 m/pixel (64 px/deg)
 ([Mercury_Messenger_USGS_DEM_Global_665m_v2.tif](https://planetarymaps.usgs.gov/mosaic/Mercury_Messenger_USGS_DEM_Global_665m_v2.tif),
@@ -179,7 +179,7 @@ Data: USGS MESSENGER global DEM v2, 665 m/pixel (64 px/deg)
      the flat model
 3. **Lookup**. `MercuryTemperature()` reads each point's slope from the map
    and interpolates the table in 6D. The polar products still override it at
-   80° and above.
+   their edge latitude and above.
 
 Accuracy of table interpolation vs direct runs, at 400 random sites with real slopes:
 
@@ -205,7 +205,7 @@ level ground, and one facing the pole about 39 K below it.
 - 128 ray-traced horizon azimuths, a finite solar disk, single-bounce
   scattered light, and terrain IR from slope-table temperatures
 
-## Polar regions (≥ 80°): terrain-aware model
+## Polar regions (≥ 75° N, ≥ 70° S): terrain-aware model
 
 At the poles the Sun stays within a few degrees of the horizon, so
 topography dominates: craters hold permanently shadowed regions (PSRs) at
@@ -213,13 +213,17 @@ topography dominates: craters hold permanently shadowed regions (PSRs) at
 
 **Topography**:
 - North: MESSENGER MLA laser altimetry, 250 m polar stereographic
-  (`hdem_75n_250m`, PDS Geosciences MLA GDR).
+  (`hdem_75n_250m`, PDS Geosciences MLA GDR). It covers 75–90° N, so the
+  terrain beyond the cap edge (70–75° N, needed for horizons) comes from the
+  USGS global DEM, blended over 0.5°. The two agree to a median of 30–50 m
+  where they overlap.
 - South: MDIS stereo DEM, 665 m (`MSGR_DEM_USG_SP_I_V02`, PDS Imaging
   MESSDEM).
 - Files go in `data/dem/`.
 
 **Method** (`polar_terrain.py`):
-- 2 km working grid, 80°–90° plus a 5° margin of surrounding terrain.
+- 2 km working grid: the cap (to 75° N / 70° S, `cap_lat` in `polar_terrain.py`)
+  plus a 5° margin of surrounding terrain.
 - Exact 3-D geometry on the sphere, so planetary curvature is handled.
 - Ray-traced horizons: 64 azimuths, out to 250 km.
 - Sunlight:
@@ -234,8 +238,9 @@ topography dominates: craters hold permanently shadowed regions (PSRs) at
 - The same 1D regolith column runs under every cell.
 - Margin cells outside the product use the flat model.
 
-**Products** (`data/mercury_polar_<pole>_2km.nc`, 644 × 644 cells, about
-143 MB each, stored as int16 with scale factors):
+**Products** (`data/mercury_polar_<pole>_2km.nc`: north about 644 × 644 cells,
+south about 862 × 862, stored as int16 with scale factors; the edge latitude is
+the file's `lat_min` attribute):
 - `temperature(y, x, local_time, depth)`: 48 local times and 13 depths
   from 0 to 3 m.
 - `permanent_shadow`
@@ -247,11 +252,13 @@ topography dominates: craters hold permanently shadowed regions (PSRs) at
 - `elevation` and `slope`
 - `dem_quality`
 
-`MercuryTemperature` automatically uses these products poleward of 80°
+`MercuryTemperature` automatically uses these products poleward of their `lat_min`
 (pass `terrain=False` to get the flat model). `on_demand()` uses `PolarSite`
 there. It runs a 25 km neighbourhood at native DEM resolution, nested in a
 2 km grid out to 250 km. Infrared from distant terrain comes from the
 product.
+
+Statistics from the previous 80° products (to be refreshed for the 75° N / 70° S builds):
 
 | | North | South |
 |---|---|---|
@@ -297,7 +304,7 @@ the surface and ±25 K at 0.5 m. Use `on_demand()` for a specific base site.
 | Polar site, new neighbourhood (builds 2 km far grid) | ~0.9–1.2 s |
 | Polar site, within cached neighbourhood (~50 km) | 43–64 ms |
 | Polar product, one pole (143k cells) | ~31–33 min |
-| Slope-aware lookup below 80° | ~0.7 µs per point, vectorised |
-| Terrain-aware site below 80°, new neighbourhood (`GlobalSite`) | ~0.86–0.92 s (first in a process ~1.2 s with cached compiled code) |
-| Terrain-aware site below 80°, within cached neighbourhood | 63–80 ms |
+| Slope-aware lookup outside the caps | ~0.7 µs per point, vectorised |
+| Terrain-aware site outside the caps, new neighbourhood (`GlobalSite`) | ~0.86–0.92 s (first in a process ~1.2 s with cached compiled code) |
+| Terrain-aware site outside the caps, within cached neighbourhood | 63–80 ms |
 | Slope table, global (7.4M slope columns) | ~82 min on 8 cores |

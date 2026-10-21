@@ -69,7 +69,8 @@ blank.needsUpdate = true;
 
 const uniforms = {
   atlasA: { value: blank }, atlasB: { value: blank }, mixAB: { value: 0 },
-  capN: { value: 644 }, capNorth: { value: new THREE.Vector4() }, capSouth: { value: new THREE.Vector4() },
+  capNorth: { value: new THREE.Vector4() }, capSouth: { value: new THREE.Vector4() },
+  capLat: { value: new THREE.Vector2(80, 80) }, capCol: { value: new THREE.Vector2(0, 0) },
   hasNorth: { value: 0 }, hasSouth: { value: 0 }, ready: { value: 0 },
   slopeTex: { value: blank }, hasSlopes: { value: 0 }, gMax: { value: 0.4 },
   gNodes: { value: new Array(9).fill(0) }, nG: { value: 1 },
@@ -89,11 +90,12 @@ const material = new THREE.ShaderMaterial({
     }`,
   fragmentShader: /* glsl */`
     uniform sampler2D atlasA, atlasB, lut, slopeTex;
-    uniform float mixAB, capN, hasNorth, hasSouth, ready, tLo, tStep, cMin, cMax;
+    uniform float mixAB, hasNorth, hasSouth, ready, tLo, tStep, cMin, cMax;
     uniform float hasSlopes, gMax, tileW, tileH, capY0;
     uniform float gNodes[9];
     uniform int nG;
-    uniform vec4 capNorth, capSouth;
+    uniform vec4 capNorth, capSouth;   // per cap: x0, y0, dx (km), n (cells per side)
+    uniform vec2 capLat, capCol;        // north, south: product edge latitude (deg), atlas column
     varying vec3 vPos; varying vec3 vNormalView; varying vec2 vUv;
     const float R = 2439.4;
 
@@ -153,15 +155,15 @@ const material = new THREE.ShaderMaterial({
 
     float sampleT(sampler2D a, float lat, float lonS, vec2 g) {
       float alat = abs(lat);
-      int n = int(capN);
-      if (alat > radians(79.9)) {
-        bool north = lat > 0.0;
+      bool north = lat > 0.0;
+      if (alat > radians((north ? capLat.x : capLat.y) - 0.1)) {
         vec4 c = north ? capNorth : capSouth;
         if ((north ? hasNorth : hasSouth) > 0.5) {
           float rho = 2.0 * R * tan((1.5707963 - alat) * 0.5);
           float x = rho * sin(lonS), y = (north ? -1.0 : 1.0) * rho * cos(lonS);
           vec2 px = vec2((x - c.x) / c.z + 0.5, (c.y - y) / c.z + 0.5);
-          vec2 r = bil(a, px, ivec4(north ? 0 : n, int(capY0), n, n), false);
+          int n = int(c.w);
+          vec2 r = bil(a, px, ivec4(int(north ? capCol.x : capCol.y), int(capY0), n, n), false);
           if (r.y > 0.5) return r.x;
         }
       }
@@ -185,12 +187,13 @@ const material = new THREE.ShaderMaterial({
         float T = mix(sampleT(atlasA, lat, lon, g), sampleT(atlasB, lat, lon, g), mixAB);
         col = texture2D(lut, vec2(clamp((T - cMin) / (cMax - cMin), 0.0, 1.0), 0.5)).rgb;
       }
-      // graticule every 30 degrees, plus the 80-degree terrain-model boundary
+      // graticule every 30 degrees, plus the boundary of each polar terrain model
       float latd = degrees(lat), lond = degrees(lon);
+      float capd = latd > 0.0 ? capLat.x : capLat.y;
       float gl = abs(fract(latd / 30.0 + 0.5) - 0.5) * 30.0, go = abs(fract(lond / 30.0 + 0.5) - 0.5) * 30.0;
       float lineLat = 1.0 - smoothstep(0.0, 1.2 * fwidth(latd), gl);
-      float lineLon = (1.0 - smoothstep(0.0, 1.2 * fwidth(lond), go)) * step(abs(latd), 80.0);
-      float ring = 1.0 - smoothstep(0.0, 1.2 * fwidth(latd), abs(abs(latd) - 80.0));
+      float lineLon = (1.0 - smoothstep(0.0, 1.2 * fwidth(lond), go)) * step(abs(latd), capd);
+      float ring = 1.0 - smoothstep(0.0, 1.2 * fwidth(latd), abs(abs(latd) - capd));
       col = mix(col, vec3(1.0), 0.22 * max(lineLat, lineLon));
       col = mix(col, vec3(0.55, 0.75, 1.0), 0.35 * ring);
       // gentle limb darkening for depth perception
@@ -536,11 +539,16 @@ const SITES = [
   [0, 90, "Equator, warm pole", "0° N, 90° E"],
   [45, 45, "Mid-latitude", "45° N, 45° E"],
   [82, 30, "Northern plains", "82° N, 30° E"],
-  [85.85, 297, "Prokofiev crater floor", "permanent shadow"],
-  [87.9, 281.2, "Kandinsky crater", "85.9–89° N"],
+  [85.85, 63.0, "Prokofiev crater floor", "permanent shadow"],
+  [87.9, 78.8, "Kandinsky crater", "87.9° N, 78.8° E"],
   [-85, 100, "South polar terrain", "85° S, 100° E"],
   [-81, 250, "South, 81° S", "81° S, 250° E"],
 ];
+
+// polar terrain-model extent, from the products the server has
+const capLatOf = pole => state.meta?.caps?.[pole]?.lat_min ?? 80;
+const isPolar = lat => Math.abs(lat) >= capLatOf(lat > 0 ? "north" : "south");
+const capText = () => `${capLatOf("north")}° N and ${capLatOf("south")}° S`;
 
 function gotoHTML() {
   return `<form class="goto" id="goto">
@@ -565,7 +573,7 @@ function renderIntro() {
     ${gotoHTML()}
     <div class="sites">${SITES.map((s, i) => `<button class="btn" data-i="${i}">${s[2]}<small>${s[3]}</small></button>`).join("")}</div>
     <h3>About the data</h3>
-    <p class="note">This is a 1D heat-conduction model of Mercury's regolith, using the Hayne et al. (2017) properties. Poleward of 80°
+    <p class="note">This is a 1D heat-conduction model of Mercury's regolith, using the Hayne et al. (2017) properties. Poleward of ${capText()}
     it uses terrain-aware polar products built from MESSENGER topography, which add shadowing, slopes and heat from surrounding terrain.
     Elsewhere it includes the slope of each ~2 km patch of ground, from the MESSENGER global elevation map; "Run exact model here" adds
     the full terrain treatment anywhere. Times are mean local solar time: 12:00 is mean noon.</p>`;
@@ -651,7 +659,7 @@ function renderSite() {
     <div class="row" style="margin-top:12px">
       ${state.exact ? '<button class="btn" id="btn-table">Back to table values</button>'
                     : `<button class="btn primary" id="btn-exact">Run exact model here</button>
-                       <span class="muted" style="font-size:12px">${Math.abs(lat) >= 80 ? "full terrain model at 250–665 m detail" : "full terrain model: horizons and heat from surrounding terrain, 665 m detail"}</span>`}
+                       <span class="muted" style="font-size:12px">${isPolar(lat) ? "full terrain model at 250–665 m detail" : "full terrain model: horizons and heat from surrounding terrain, 665 m detail"}</span>`}
     </div>
     ${info.script ? `<div class="row" style="margin-top:8px">
       <button class="btn" id="btn-script">Download Python script</button>
@@ -825,12 +833,16 @@ async function init() {
   requestAnimationFrame(loop);
   const meta = await (await fetch("/api/meta")).json();
   state.meta = meta;
-  uniforms.capN.value = meta.cap_n;
   uniforms.tLo.value = meta.t_lo;
   uniforms.tStep.value = meta.t_step;
   for (const [pole, u, h] of [["north", "capNorth", "hasNorth"], ["south", "capSouth", "hasSouth"]]) {
     const c = meta.caps[pole];
-    if (c) { uniforms[u].value.set(c.x0, c.y0, c.dx, c.n); uniforms[h].value = 1; }
+    if (c) {
+      uniforms[u].value.set(c.x0, c.y0, c.dx, c.n);
+      uniforms[h].value = 1;
+      uniforms.capLat.value.setComponent(pole === "north" ? 0 : 1, c.lat_min);
+      uniforms.capCol.value.setComponent(pole === "north" ? 0 : 1, c.col);
+    }
   }
   uniforms.nG.value = meta.g_nodes.length;
   uniforms.gNodes.value = meta.g_nodes.concat(new Array(9 - meta.g_nodes.length).fill(0));

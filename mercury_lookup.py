@@ -6,15 +6,16 @@ Query Mercury regolith temperature at any (lon, lat, local time, depth).
     mt(lon=250.0, lat=-35.0, local_time=6.5, depth=0.4)   # K, from the table
     mt.on_demand(lat=-35.0, lon=250.0)           # exact 1D run for that site (~0.1 s)
 
-Poleward of 80 deg, values come from the terrain-aware polar products
-(data/mercury_polar_<pole>_2km.nc) when present, which include shadowing,
+Poleward of each polar product's edge (its lat_min attribute: 75 N and 70 S
+as built by polar_terrain.py), values come from the terrain-aware polar
+products (data/mercury_polar_<pole>_2km.nc) when present, which include shadowing,
 slopes and heat exchange with surrounding terrain. Elsewhere they come from
 the slope table (data/mercury_slope_table.nc) at the local ~2 km slope of the
 global DEM (data/mercury_slopes_2km.nc), when present. Pass terrain=False to
 use the flat-terrain model everywhere. on_demand() runs the full
 terrain-aware single-site model (ray-traced horizons, heat from visible
-terrain) at native DEM resolution: polar_site.PolarSite poleward of 80 deg,
-global_terrain.GlobalSite elsewhere.
+terrain) at native DEM resolution: polar_site.PolarSite within the polar
+products' extent, global_terrain.GlobalSite elsewhere.
 
 Inputs broadcast like numpy arrays. Longitude is degrees east (any range),
 latitude -90..90, local_time is mean local solar time in hours (0-24, 12 =
@@ -135,9 +136,18 @@ class MercuryTemperature:
         return dict(elevation_m=elev, slope_deg=float(np.rad2deg(np.arctan(np.hypot(gx, gy)))),
                     facing_deg=float(np.rad2deg(np.arctan2(-gx, -gy)) % 360.0), gx=gx, gy=gy)
 
+    def polar_lat_min(self, pole):
+        """Equatorward edge (deg) of a polar product's extent (80 if the product is absent)."""
+        tab = self.polar.get(pole)
+        return tab.lat_min if tab is not None else 80.0
+
+    def is_polar(self, lat):
+        """True if the terrain-aware polar model covers this latitude."""
+        return abs(lat) >= self.polar_lat_min("north" if lat > 0 else "south")
+
     def site_model(self, lat):
         """The full terrain-aware single-site model for this latitude (cached), or None."""
-        if abs(lat) >= 80.0:
+        if self.is_polar(lat):
             from polar_site import PolarSite
             key = "north" if lat > 0 else "south"
             if key not in self._sites:

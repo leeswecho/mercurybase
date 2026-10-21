@@ -67,13 +67,15 @@ def main():
 
 
 POLAR_SITES = [  # (lat, lon, description)
-    (85.85, 297.0, "Prokofiev floor"),
-    (86.4, 300.0, "Prokofiev surroundings"),
-    (87.9, 281.2, "Kandinsky"),
+    (85.85, 63.0, "Prokofiev floor"),
+    (86.4, 60.0, "Prokofiev surroundings"),
+    (87.9, 78.8, "Kandinsky"),
     (88.8, 148.9, "Tolkien"),
     (82.0, 30.0, "82N plains"),
+    (77.0, 120.0, "77N (cap edge)"),
     (-85.0, 100.0, "85S"),
     (-81.0, 250.0, "81S"),
+    (-72.0, 300.0, "72S (cap edge)"),
 ]
 
 
@@ -119,7 +121,7 @@ GLOBAL_SITES = [  # (lat, lon, description)
 
 
 def global_sites():
-    """Time full terrain-aware on-demand runs below 80 deg, against the slope table."""
+    """Time full terrain-aware on-demand runs outside the polar caps, against the slope table."""
     import global_terrain as gt
     from mercury_lookup import MercuryTemperature
     if not os.path.exists(gt.TABLE_PATH):
@@ -128,7 +130,7 @@ def global_sites():
     t0 = time.perf_counter()
     site = mt.site_model(0.0)
     site.run(10.0, 10.0)  # compile + build far-field grid
-    print(f"\nterrain-aware sites below 80 deg (665 m DEM)\n[setup + first query incl. compile "
+    print(f"\nterrain-aware sites outside the polar caps (665 m DEM)\n[setup + first query incl. compile "
           f"{time.perf_counter() - t0:.1f} s]")
     hdr = (f"{'site':22s} {'first ms':>9s} {'repeat ms':>9s} {'slope':>6s} {'horizon max':>11s} "
            f"{'exact vs table, mean |dT| K':>27s}")
