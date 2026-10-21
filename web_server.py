@@ -1,8 +1,12 @@
 """
 Local web server for interactively exploring the Mercury temperature model.
 
-Usage:  python web_server.py [--port 8000] [--host 127.0.0.1]
+Usage:  python web_server.py [--port 8000] [--host 127.0.0.1] [--interaction-log FILE]
 then open http://127.0.0.1:8000/
+
+--interaction-log appends one JSON line per site selection, exact run and script
+download (UTC time, event, lat, lon, HTTP status, seconds; no client addresses).
+The file rotates at 10 MB, keeping 10 old files.
 
 Endpoints (all GET):
   /api/meta                    grids, colour scale, orbit (true subsolar longitude)
@@ -36,6 +40,8 @@ Slope texture: R, G = 128 + 127 * g / G_MAX for gx (east), gy (north).
 import argparse
 import io
 import json
+import logging
+import logging.handlers
 import mimetypes
 import os
 import threading
@@ -395,11 +401,38 @@ class Backend:
                     info=info, horizon=horizon, sun=self._sun_path(lat, lon % 360, np.asarray(lt)))
 
 
+# requests recorded in the interaction log, by path
+LOGGED = {"/api/point": "select", "/api/ondemand": "exact_run", "/api/script": "script_download"}
+
+
+def interaction_logger(path):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    h = logging.handlers.RotatingFileHandler(path, maxBytes=10_000_000, backupCount=10, encoding="utf-8")
+    h.setFormatter(logging.Formatter("%(message)s"))
+    log = logging.getLogger("mercurybase.interactions")
+    log.addHandler(h)
+    log.setLevel(logging.INFO)
+    log.propagate = False
+    return log
+
+
+def _num(v):
+    try:
+        return round(float(v), 4)
+    except (TypeError, ValueError):
+        return v
+
+
 class Handler(BaseHTTPRequestHandler):
     backend: Backend = None
+    interactions: logging.Logger = None
 
     def log_message(self, fmt, *args):
         pass
+
+    def send_response(self, code, message=None):
+        self._status = code
+        super().send_response(code, message)
 
     def _send(self, code, body, ctype, cache=None):
         self.send_response(code)
@@ -416,6 +449,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        event = LOGGED.get(u.path) if self.interactions else None
+        if not event:
+            return self._handle(u, q)
+        t0, self._status = time.perf_counter(), None
+        try:
+            self._handle(u, q)
+        finally:
+            self.interactions.info(json.dumps(dict(
+                time=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), event=event,
+                lat=_num(q.get("lat")), lon=_num(q.get("lon")), status=self._status,
+                seconds=round(time.perf_counter() - t0, 3))))
+
+    def _handle(self, u, q):
         b = self.backend
         try:
             if u.path == "/api/meta":
@@ -479,7 +525,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--interaction-log", metavar="FILE",
+                    help="append site selections, exact runs and script downloads to FILE (JSON lines)")
     a = ap.parse_args()
+    if a.interaction_log:
+        Handler.interactions = interaction_logger(a.interaction_log)
+        print(f"logging interactions to {a.interaction_log}")
     Handler.backend = Backend()
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
     print(f"serving on http://{a.host}:{a.port}/")
