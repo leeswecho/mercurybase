@@ -594,7 +594,14 @@ function renderIntro() {
     <p class="note">This is a 1D heat-conduction model of Mercury's regolith, using the Hayne et al. (2017) properties. Poleward of ${capText()}
     it uses terrain-aware polar products built from MESSENGER topography, which add shadowing, slopes and heat from surrounding terrain.
     Elsewhere it includes the slope of each ~2 km patch of ground, from the MESSENGER global elevation map; "Run exact model here" adds
-    the full terrain treatment anywhere. Times are mean local solar time: 12:00 is mean noon.</p>`;
+    the full terrain treatment anywhere. Times are mean local solar time: 12:00 is mean noon.</p>
+    <h3>Terrain detail outside the poles</h3>
+    <p class="note">Detailed elevation data are used only poleward of ${capText()}. There, laser altimetry (north, 250 m per pixel)
+    and stereo imaging (south) give the shadows cast by crater walls and hills, which control temperatures where the Sun stays low.
+    Toward the equator, the globe and site tables use only the local slope from the coarser, smoothed global elevation map
+    (665 m per pixel). They do not include shadows or heat from nearby terrain. This matters little where the Sun is high, but
+    crater floors and slopes facing away from the Sun near the edge of the polar regions can be off by tens of degrees.
+    "Run exact model here" adds horizons from the same global elevation map, but features smaller than about 1–2 km are still not resolved.</p>`;
   bindGoto();
   sb.querySelectorAll(".sites .btn").forEach(b => b.addEventListener("click", () => {
     const s = SITES[+b.dataset.i]; select(s[0], s[1], true);
