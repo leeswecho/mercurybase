@@ -579,6 +579,10 @@ async function select(lat, lon, fly = false) {
   lon = ((lon % 360) + 360) % 360;
   state.sel = { lat, lon };
   state.exact = false;
+  // the old site's charts and tiles disappear with the "Loading…" sidebar, so drop
+  // its data now; otherwise time updates during the fetch write to missing elements
+  state.data = null;
+  state.charts = [];
   placeMarker(selMarker, lat, lon);
   if (fly) flyTo(lat, lon);
   writeHash();
@@ -587,7 +591,7 @@ async function select(lat, lon, fly = false) {
     const r = await fetch(`/api/point?lat=${lat}&lon=${lon}`);
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || r.status);
-    if (state.sel.lat !== lat || state.sel.lon !== lon) return;
+    if (state.sel?.lat !== lat || state.sel?.lon !== lon) return;
     state.data = d;
     renderSite();
   } catch (e) {
@@ -604,7 +608,7 @@ async function runExact() {
     const r = await fetch(`/api/ondemand?lat=${lat}&lon=${lon}`);
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || r.status);
-    if (state.sel.lat !== lat || state.sel.lon !== lon) return;
+    if (state.sel?.lat !== lat || state.sel?.lon !== lon) return;
     state.data = d; state.exact = true;
     renderSite();
   } catch (e) {
@@ -785,6 +789,14 @@ function readHash() {
 // ------------------------------------------------------------------- loop
 let last = performance.now();
 function loop(now) {
+  requestAnimationFrame(loop);   // schedule first, so an error below cannot stop rendering
+  try {
+    frame(now);
+  } catch (e) {
+    console.error(e);
+  }
+}
+function frame(now) {
   const dt = (now - last) / 1000; last = now;
   if (state.meta && state.playing) setTau(state.tau + dt / +$("speed").value);
   if (fly) {
@@ -805,7 +817,6 @@ function loop(now) {
     if (state.dirty) { state.dirty = false; updateTimeUI(); }
   }
   renderer.render(scene, camera);
-  requestAnimationFrame(loop);
 }
 
 // ------------------------------------------------------------------- init
