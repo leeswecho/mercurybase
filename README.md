@@ -58,8 +58,9 @@ lt, z, T = mt.on_demand(lat=-35.0, lon=250.0)         # exact run for one site
 
 Add `--interaction-log FILE` to record site selections, exact runs and script
 downloads as JSON lines. Each line has the UTC time, event (`select`,
-`exact_run` or `script_download`), lat, lon, HTTP status and seconds. Client
-addresses are not recorded. The file rotates at 10 MB, keeping 10 old files.
+`exact_run` or `script_download`), visitor, lat, lon, HTTP status and seconds.
+`visitor` is a random 16-hex-digit ID the page creates once per browser (kept in
+localStorage), so visitors can be counted. Client addresses are not recorded. The file rotates at 10 MB, keeping 10 old files.
 
 The page shows a 3D globe coloured by temperature at a chosen depth
 (surface to 3 m). The polar caps are drawn at the 2 km resolution of the

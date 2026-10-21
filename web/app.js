@@ -10,6 +10,18 @@ const $ = id => document.getElementById(id);
 // temperature unit: Fahrenheit by default; the viewer's choice is remembered in this browser
 try { const u = localStorage.getItem("mercury-unit"); if (UNITS[u]) units.key = u; } catch (e) { /* storage unavailable */ }
 
+// anonymous random ID for this browser, sent with site requests so the server's
+// interaction log can count visitors; it carries no personal information
+const VISITOR = (() => {
+  const make = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, "0")).join("");
+  try {
+    let v = localStorage.getItem("mercury-visitor");
+    if (!/^[0-9a-f]{16}$/.test(v || "")) { v = make(); localStorage.setItem("mercury-visitor", v); }
+    return v;
+  } catch (e) { return make(); /* storage unavailable: one ID per page load */ }
+})();
+const VISITOR_HEADERS = { headers: { "X-Visitor": VISITOR } };
+
 const state = {
   meta: null, tau: 0, playing: false, depth: 0,
   sel: null,          // {lat, lon}
@@ -346,7 +358,7 @@ const hover = { busy: false, want: null, key: "", T: null };
 // times; a non-JSON body becomes a readable error instead of a parse failure.
 async function fetchJSON(url, retries = 3) {
   for (let i = 0; ; i++) {
-    const r = await fetch(url);
+    const r = await fetch(url, VISITOR_HEADERS);
     if ([502, 503, 504].includes(r.status) && i < retries) {
       await new Promise(res => setTimeout(res, 1500 * (i + 1)));
       continue;
@@ -759,7 +771,7 @@ async function downloadScript(e) {
   const btn = e.currentTarget, d = state.data;
   btn.disabled = true; btn.textContent = "Preparing script… (~1–5 s)";
   try {
-    const r = await fetch(`/api/script?lat=${d.lat}&lon=${d.lon}`);
+    const r = await fetch(`/api/script?lat=${d.lat}&lon=${d.lon}`, VISITOR_HEADERS);
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
     const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "")?.[1] || "mercury_site.py";
     const a = document.createElement("a");
