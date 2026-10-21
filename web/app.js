@@ -342,6 +342,24 @@ function updateGlobeTexture() {
 
 // temperature under the mouse, from the server (one request in flight at a time)
 const hover = { busy: false, want: null, key: "", T: null };
+// GET JSON from the API. Gateway errors (server restarting) are retried a few
+// times; a non-JSON body becomes a readable error instead of a parse failure.
+async function fetchJSON(url, retries = 3) {
+  for (let i = 0; ; i++) {
+    const r = await fetch(url);
+    if ([502, 503, 504].includes(r.status) && i < retries) {
+      await new Promise(res => setTimeout(res, 1500 * (i + 1)));
+      continue;
+    }
+    let d;
+    try { d = await r.json(); } catch (e) {
+      throw new Error(`server unavailable (HTTP ${r.status}); please try again`);
+    }
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    return d;
+  }
+}
+
 function requestHoverT(lat, lon) {
   hover.want = { lat, lon, t: state.tau, depth: state.depth };
   if (hover.busy) return;
@@ -596,9 +614,7 @@ async function select(lat, lon, fly = false) {
   writeHash();
   $("sidebar").innerHTML = `<h2>${fmtLat(lat)}, ${fmtLon(lon)}</h2><p class="note">Loading…</p>`;
   try {
-    const r = await fetch(`/api/point?lat=${lat}&lon=${lon}`);
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || r.status);
+    const d = await fetchJSON(`/api/point?lat=${lat}&lon=${lon}`);
     if (state.sel?.lat !== lat || state.sel?.lon !== lon) return;
     state.data = d;
     renderSite();
@@ -613,9 +629,7 @@ async function runExact() {
   btn.disabled = true;
   btn.textContent = "Running terrain model… (~1–5 s)";
   try {
-    const r = await fetch(`/api/ondemand?lat=${lat}&lon=${lon}`);
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || r.status);
+    const d = await fetchJSON(`/api/ondemand?lat=${lat}&lon=${lon}`, 1);
     if (state.sel?.lat !== lat || state.sel?.lon !== lon) return;
     state.data = d; state.exact = true;
     renderSite();
@@ -739,7 +753,7 @@ async function downloadScript(e) {
   btn.disabled = true; btn.textContent = "Preparing script… (~1–5 s)";
   try {
     const r = await fetch(`/api/script?lat=${d.lat}&lon=${d.lon}`);
-    if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
     const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "")?.[1] || "mercury_site.py";
     const a = document.createElement("a");
     a.href = URL.createObjectURL(await r.blob());

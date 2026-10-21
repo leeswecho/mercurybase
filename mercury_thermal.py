@@ -26,6 +26,7 @@ Conventions
     so it cannot be used as an unambiguous time coordinate.
 """
 
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -34,6 +35,23 @@ from numba import njit, prange
 
 SIGMA = 5.670374419e-8  # Stefan-Boltzmann, W m-2 K-4
 DAY = 86400.0  # s
+
+_parallel_lock = threading.RLock()
+
+
+def serial_launch(dispatcher):
+    """Wrap a parallel=True function so only one thread launches it at a time.
+
+    Numba's default "workqueue" threading layer aborts the whole process when
+    two threads enter parallel regions at once (e.g. web-server requests); the
+    thread-safe TBB/OpenMP layers are often not installed. Call the wrapped
+    function from Python only, not from other jitted code.
+    """
+    def call(*args, **kwargs):
+        with _parallel_lock:
+            return dispatcher(*args, **kwargs)
+    call.__name__, call.__doc__, call.py_func = dispatcher.__name__, dispatcher.__doc__, dispatcher.py_func
+    return call
 
 
 @dataclass
@@ -336,6 +354,7 @@ def spin_up_flux(T, Tday, F, tol, max_days, accelerate,
     return day, converged
 
 
+@serial_launch
 @njit(parallel=True, cache=True)
 def _batch(lats, lons, T0, Tout, days, conv, tol, max_days, accelerate, stride,
            z, rho, kc, chi, emis, A0, aa, ab, q, flux_scale, lss, dt):

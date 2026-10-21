@@ -21,12 +21,13 @@ import numpy as np
 import xarray as xr
 from numba import njit, prange
 
-from mercury_thermal import SIGMA, Model
+from mercury_thermal import SIGMA, Model, serial_launch
 from polar_terrain import (DEMS, HERE, N_LT, N_TC, OUT_DEPTHS, SUN_RADIUS_RAD_1AU,
                            TerrainGrid, _G, _terrain_batch, depth_weights, load_dem,
                            stereo_forward)
 
 
+@serial_launch
 @njit(parallel=True, cache=True)
 def _ray_geometry(fi0, fj0, p0s, ups, nes, nns, nus, ems, nms, P, naz, step0, nsteps,
                   wmin, fill, counts, indptr, src, wts, horizon, viewed):

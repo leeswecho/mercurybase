@@ -31,7 +31,7 @@ import numpy as np
 import xarray as xr
 from numba import njit, prange
 
-from mercury_thermal import SIGMA, Model, albedo
+from mercury_thermal import SIGMA, Model, albedo, serial_launch
 from polar_terrain import (DEM_DIR, HERE, N_LT, N_TC, OUT_DEPTHS, SUN_RADIUS_RAD_1AU,
                            _reflected_source, _terrain_batch, depth_weights,
                            flat_surface_temperature, pack)
@@ -228,6 +228,7 @@ def _node(v, nodes):
     return i, (v - nodes[i]) / (nodes[i + 1] - nodes[i])
 
 
+@serial_launch
 @njit(parallel=True, cache=True)
 def _table_points(T, scale, g_nodes, lat, lon, gx, gy, lt, depth, d_nodes, out):
     """
@@ -271,6 +272,7 @@ def _table_points(T, scale, g_nodes, lat, lon, gx, gy, lt, depth, d_nodes, out):
         out[p] = acc * scale
 
 
+@serial_launch
 @njit(parallel=True, cache=True)
 def _table_series(T, scale, g_nodes, lat, lon, gx, gy, k_depth, ntc, out):
     """Temperature at one table depth index vs time of day (ntc samples from tau = 0)."""

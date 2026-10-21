@@ -32,7 +32,7 @@ import xarray as xr
 from numba import njit, prange
 from scipy import ndimage
 
-from mercury_thermal import SIGMA, Grid, Model, albedo, orbit, spin_up_flux
+from mercury_thermal import SIGMA, Grid, Model, albedo, orbit, serial_launch, spin_up_flux
 
 R_KM = 2439.4  # projection sphere radius of both DEMs
 SUN_RADIUS_RAD_1AU = 0.0046524  # angular radius of the Sun at 1 AU
@@ -196,6 +196,7 @@ def _G(e, m, nu):
     return m * (0.5 * e + 0.25 * np.sin(2 * e)) + 0.5 * nu * np.sin(e) ** 2
 
 
+@serial_launch
 @njit(parallel=True, cache=True)
 def _geometry(rec, P, U, E3, N3, NRM, EM, NM, naz, nsteps, wmin, do_vf, fill,
               counts, indptr, src, wts, horizon, sky):
@@ -321,6 +322,7 @@ def _sun(lat, lon, n_enu, em, nm, hor, lss, fs, rsun):
     return f, mu, fs * f * mu
 
 
+@serial_launch
 @njit(parallel=True, cache=True)
 def _reflected_source(lat, lon, n_enu, EM, NM, hor, lss, fs, rsun, A0, aa, ab, absorb,
                       incident=False):
@@ -339,6 +341,7 @@ def _reflected_source(lat, lon, n_enu, EM, NM, hor, lss, fs, rsun, A0, aa, ab, a
     return out
 
 
+@serial_launch
 @njit(parallel=True, cache=True)
 def _radiance(R, T, e2s):
     """Source term leaving each cell: scattered part R + eps^2 sigma T^4 (float32)."""
@@ -349,6 +352,7 @@ def _radiance(R, T, e2s):
     return X
 
 
+@serial_launch
 @njit(parallel=True, cache=True)
 def _sparse_apply(indptr, src, wts, X):
     """Y[r, :] = sum_j w_rj X[src_j, :]"""
@@ -368,6 +372,7 @@ def _sparse_apply(indptr, src, wts, X):
 # Thermal solution with terrain
 # ----------------------------------------------------------------------------
 
+@serial_launch
 @njit(parallel=True, cache=True)
 def _terrain_batch(lat, lon, n_enu, EM, NM, hor, Find, lss, fs, rsun, stride, tol,
                    max_days, z, rho, kc, chi, emis, A0, aa, ab, q, dt,
