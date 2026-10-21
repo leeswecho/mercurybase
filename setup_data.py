@@ -43,7 +43,9 @@ def download(name, url):
     os.makedirs(DEM_DIR, exist_ok=True)
     tmp = path + ".part"
     print(f"downloading {url}")
-    with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
+    # some hosts (USGS) refuse Python's default User-Agent
+    req = urllib.request.Request(url, headers={"User-Agent": "mercurybase-setup/1.0"})
+    with urllib.request.urlopen(req) as r, open(tmp, "wb") as f:
         total = int(r.headers.get("Content-Length", 0))
         done, t0 = 0, time.time()
         while chunk := r.read(1 << 20):
