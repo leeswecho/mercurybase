@@ -5,8 +5,9 @@ Usage:  python web_server.py [--port 8000] [--host 127.0.0.1] [--interaction-log
 then open http://127.0.0.1:8000/
 
 --interaction-log appends one JSON line per site selection, exact run and script
-download (UTC time, event, lat, lon, HTTP status, seconds, and the page's anonymous
-random per-browser ID from the X-Visitor header; no client addresses).
+download (UTC time, event, lat, lon, HTTP status, seconds, the page's anonymous
+random per-browser ID from the X-Visitor header, and the User-Agent string; no
+client addresses).
 The file rotates at 10 MB, keeping 10 old files.
 
 Endpoints (all GET):
@@ -461,7 +462,8 @@ class Handler(BaseHTTPRequestHandler):
             self.interactions.info(json.dumps(dict(
                 time=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), event=event,
                 visitor=self._visitor(), lat=_num(q.get("lat")), lon=_num(q.get("lon")), status=self._status,
-                seconds=round(time.perf_counter() - t0, 3))))
+                seconds=round(time.perf_counter() - t0, 3),
+                user_agent=(self.headers.get("User-Agent") or "")[:300] or None)))
 
     def _visitor(self):
         v = self.headers.get("X-Visitor", "")
